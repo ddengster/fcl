@@ -39,6 +39,7 @@
 
 #include "fcl/math/bv/utility.h"
 #include "fcl/narrowphase/collision.h"
+#include "fcl/narrowphase/continuous_collision.h"
 #include "fcl/narrowphase/detail/gjk_solver_indep.h"
 #include "fcl/narrowphase/detail/gjk_solver_libccd.h"
 #include "fcl/narrowphase/detail/traversal/collision_node.h"
@@ -85,6 +86,69 @@ std::vector<Contact<S>>& global_pairs_now()
 {
   static std::vector<Contact<S>> static_global_pairs_now;
   return static_global_pairs_now;
+}
+
+template <typename S>
+void test_SplineMotion_test()
+{
+  fcl::Vector3<S> t[4];
+  t[0] = fcl::Vector3<S>(7.550000, 8, 0);
+  t[1] = fcl::Vector3<S>(4.183333, 8, 0);
+  t[2] = fcl::Vector3<S>(0.816667, 8, 0);
+  t[3] = fcl::Vector3<S>(-2.550000, 8, 0);
+
+  fcl::Vector3<S> r[4];
+  r[0] = fcl::Vector3<S>(0, 0, 3.141593);
+  r[1] = fcl::Vector3<S>(0, 0, 3.141593);
+  r[2] = fcl::Vector3<S>(0, 0, 3.141593);
+  r[3] = fcl::Vector3<S>(0, 0, 3.141593);
+  auto motion_a = std::make_shared<fcl::SplineMotion<S>>(
+    t[0], t[1], t[2], t[3],
+    r[0], r[1], r[2], r[3]);
+  
+  t[0] = fcl::Vector3<S>(-0.032564, 8, 0);
+  t[1] = fcl::Vector3<S>(1.257920, 8, 0);
+  t[2] = fcl::Vector3<S>(3.051563, 8, 0);
+  t[3] = fcl::Vector3<S>(4.627592, 8, 0);
+
+  r[0] = fcl::Vector3<S>(0, 0, 0);
+  r[1] = fcl::Vector3<S>(0, 0, 0);
+  r[2] = fcl::Vector3<S>(0, 0, 0);
+  r[3] = fcl::Vector3<S>(0, 0, 0);
+  auto motion_b = std::make_shared<fcl::SplineMotion<S>>(
+    t[0], t[1], t[2], t[3],
+    r[0], r[1], r[2], r[3]);
+
+  // test collision with unit circles
+  {
+    auto shape_a = std::make_shared<fcl::Sphere<S>>(1.0);
+    const auto obj_a = fcl::ContinuousCollisionObject<S>(
+      shape_a,
+      motion_a);
+
+    auto shape_b = std::make_shared<fcl::Sphere<S>>(1.0);
+    const auto obj_b = fcl::ContinuousCollisionObject<S>(
+      shape_b,
+      motion_b);
+
+    fcl::ContinuousCollisionRequest<S> request;
+    request.ccd_solver_type = fcl::CCDC_CONSERVATIVE_ADVANCEMENT;
+    request.gjk_solver_type = fcl::GST_LIBCCD;
+
+    fcl::ContinuousCollisionResult<S> result;
+    fcl::collide(&obj_a, &obj_b, request, result);
+
+    if (result.is_collide)
+      std::cout << "collision! toi: " << result.time_of_contact << std::endl;
+    else
+      std::cout << "no collision" << std::endl;
+  }
+
+}
+
+GTEST_TEST(FCL_COLLISION, SplineMotion_test)
+{
+  test_SplineMotion_test<double>();
 }
 
 template <typename S>
