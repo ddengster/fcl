@@ -111,6 +111,33 @@ BOOST_AUTO_TEST_CASE(SplineMotion_test)
     t[0], t[1], t[2], t[3],
     r[0], r[1], r[2], r[3]);
 
+  auto dbg_motion = [](std::shared_ptr<fcl::SplineMotion>& motion)
+  {
+    double t = 0.5;
+    for (uint i=0; i<12; ++i)
+    {
+      printf("interp: %f\n", t);
+      motion->integrate(t);
+      Transform3f tx;
+      motion->getCurrentTransform(tx);
+
+      //printf("rows: %d col: %d\n", tx.rows(), tx.cols());
+      auto rot = tx.getRotation();
+      std::cout << "rotation\n" << rot << std::endl;
+      /*auto linear = tx.linear();
+      std::cout << "linear\n" <<  linear << std::endl;*/
+      auto translation = tx.getTranslation();
+      std::cout << "translation\n" <<  translation << std::endl;
+      //std::cout << tx << std::endl;
+      //t = 1.0 - t * t;
+      t = t * t;
+    }
+  };
+  printf("motion_a:\n");
+  dbg_motion(motion_a);
+  printf("motion_b:\n");
+  dbg_motion(motion_b);
+
   // test collision with unit circles
   {
     auto shape_a = std::make_shared<fcl::Sphere>(1.0);
