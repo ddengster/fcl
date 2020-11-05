@@ -331,7 +331,8 @@ std::array<Eigen::Vector3d, 4> compute_knots(
   Eigen::Vector3d v0,
   Eigen::Vector3d v1)
 {
-printf("x0: %f %f %f x1: %f %f %f\n", x0[0], x0[1], x0[2], x1[0], x1[1], x1[2]);
+  printf("x0: %f %f %f x1: %f %f %f\n", x0[0], x0[1], x0[2], x1[0], x1[1], x1[2]);
+  printf("v0: %f %f %f v1: %f %f %f\n", v0[0], v0[1], v0[2], v1[0], v1[1], v1[2]);
   const std::array<Eigen::Vector4d, 3> subspline_coeffs =
       compute_coefficients(x0, x1, v0, v1);
 
@@ -339,7 +340,7 @@ printf("x0: %f %f %f x1: %f %f %f\n", x0[0], x0[1], x0[2], x1[0], x1[1], x1[2]);
   std::array<Eigen::Vector3d, 4> result;
   for (std::size_t i = 0; i < 3; ++i) {
     const Eigen::Vector4d p = M_inv * subspline_coeffs[i];
-    printf("p: %f %f %f %f\n", p[0], p[1], p[2], p[3]);
+    //printf("p: %f %f %f %f\n", p[0], p[1], p[2], p[3]);
     for (int j = 0; j < 4; ++j)
       result[j][i] = p[j];
   }
