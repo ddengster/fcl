@@ -44,6 +44,8 @@
 #include "fcl/narrowphase/detail/traversal/collision_node.h"
 #include "fcl/narrowphase/continuous_collision.h"
 
+#include "fcl/narrowphase/detail/traversal/distance/shape_conservative_advancement_traversal_node.h"
+
 #include "test_fcl_utility.h"
 
 #include "fcl_resources/config.h"
@@ -145,6 +147,286 @@ void test_SplineMotion_rotated_spline_collide_test()
 GTEST_TEST(FCL_COLLISION, test_SplineMotion_rotated_spline_collide_test)
 {
   test_SplineMotion_rotated_spline_collide_test<double>();
+}
+
+template <typename Shape1, typename Shape2, typename NarrowPhaseSolver>
+bool conservativeAdvancementWithOffset(
+    const Shape1& o1, const MotionBase<typename Shape1::S>* motion1, const fcl::Transform3d& offset_o1,
+    const Shape2& o2, const MotionBase<typename Shape1::S>* motion2, const fcl::Transform3d& offset_o2,
+    const NarrowPhaseSolver* solver, const CollisionRequest<typename Shape1::S>& request,
+    CollisionResult<typename Shape1::S>& result, typename Shape1::S& toc)
+{
+  using S = typename Shape1::S;
+  
+  Transform3<S> tf1;
+  Transform3<S> tf2;
+  motion1->getCurrentTransform(tf1);
+  motion2->getCurrentTransform(tf2);
+
+  // whether the first start configuration is in collision
+  if (collide(&o1, tf1 * offset_o1, &o2, tf2 * offset_o2, request, result)) {
+    toc = 0;
+    return true;
+  }
+
+  fcl::detail::ShapeConservativeAdvancementTraversalNode<Shape1, Shape2, NarrowPhaseSolver>
+      node;
+
+  initialize(node, o1, tf1, o2, tf2, solver);
+
+  node.motion1 = motion1;
+  node.motion2 = motion2;
+
+  do {
+    motion1->getCurrentTransform(tf1);
+    motion2->getCurrentTransform(tf2);
+
+    std::cout << "- tf1 linear - \n" << tf1.linear() << std::endl;
+    std::cout << "- tf1 translate - \n" << tf1.translation() << std::endl;
+    std::cout << "- tf2 linear - \n" << tf2.linear() << std::endl;
+    std::cout << "- tf2 translate - \n" << tf2.translation() << std::endl;
+
+    node.tf1 = tf1 * offset_o1;
+    node.tf2 = tf2 * offset_o2;
+
+    node.delta_t = 1;
+    node.min_distance = std::numeric_limits<S>::max();
+
+    distanceRecurse(&node, 0, 0, nullptr);
+    std::cout << "toc: " << node.toc << " delta: " << node.delta_t << std::endl;
+    if (node.delta_t <= node.t_err) {
+      // std::cout << node.delta_t << " " << node.t_err << std::endl;
+      break;
+    }
+
+    node.toc += node.delta_t;
+    if (node.toc > 1) {
+      node.toc = 1;
+      break;
+    }
+
+    node.motion1->integrate(node.toc);
+    node.motion2->integrate(node.toc);
+  } while (1);
+
+  toc = node.toc;
+
+  if (node.toc < 1) return true;
+
+  return false;
+}
+
+//fcl::detail::GJKSolver_libccd<double>
+template <typename S>
+S Collision_ConversativeAdv_OffsetShapes(
+    const CollisionGeometry<S>* o1,
+    const MotionBase<S>* motion1,
+    const fcl::Transform3d& offset_o1,
+    const CollisionGeometry<S>* o2,
+    const MotionBase<S>* motion2,
+    const fcl::Transform3d& offset_o2,
+    ContinuousCollisionResult<S>& result)
+{
+  fcl::detail::GJKSolver_libccd<double> nsolver;
+  CollisionRequest<S> c_request;
+  CollisionResult<S> c_result;
+  S toc = -1.0;
+  bool is_collide = false;
+
+  NODE_TYPE node_type1 = o1->getNodeType();
+  NODE_TYPE node_type2 = o2->getNodeType();
+
+  if (node_type1 == GEOM_SPHERE && node_type2 == GEOM_SPHERE) {
+    std::cout << "sphere vs sphere\n";
+    const fcl::Sphere<S>* obj1 = static_cast<const fcl::Sphere<S>*>(o1);
+    const fcl::Sphere<S>* obj2 = static_cast<const fcl::Sphere<S>*>(o2);
+
+    is_collide =
+        conservativeAdvancementWithOffset(
+        *obj1, motion1, offset_o1, *obj2, motion2, offset_o2, &nsolver,
+        c_request, c_result, toc);
+  } else if (node_type1 == BV_AABB && node_type2 == BV_AABB) {
+    std::cout << "todo box vs box\n";
+    const fcl::Box<S>* obj1 = static_cast<const fcl::Box<S>*>(o1);
+    const fcl::Box<S>* obj2 = static_cast<const fcl::Box<S>*>(o2);
+
+    is_collide = conservativeAdvancementWithOffset(
+        *obj1, motion1, offset_o1, *obj2, motion2, offset_o2, &nsolver,
+        c_request, c_result, toc);
+  } else if (node_type1 == GEOM_BOX && node_type2 == GEOM_SPHERE) {
+    std::cout << "todo box vs sphere\n";
+
+    const fcl::Box<S>* obj1 = static_cast<const fcl::Box<S>*>(o1);
+    const fcl::Sphere<S>* obj2 = static_cast<const fcl::Sphere<S>*>(o2);
+
+    is_collide = conservativeAdvancementWithOffset(
+        *obj1, motion1, offset_o1, *obj2, motion2, offset_o2, &nsolver,
+        c_request, c_result, toc);
+  } else if (node_type1 == GEOM_SPHERE && node_type2 == GEOM_BOX) {
+    std::cout << "todo sphere vs box\n";
+
+    const fcl::Sphere<S>* obj1 = static_cast<const fcl::Sphere<S>*>(o1);
+    const fcl::Box<S>* obj2 = static_cast<const fcl::Box<S>*>(o2);
+
+    is_collide = conservativeAdvancementWithOffset(
+        *obj1, motion1, offset_o1, *obj2, motion2, offset_o2, &nsolver,
+        c_request, c_result, toc);
+  } else {
+    std::cerr << "Warning: collision function between node type " << node_type1
+              << " and node type " << node_type2 << " is not supported"
+              << std::endl;
+  }
+  result.is_collide = is_collide;
+  result.time_of_contact = toc;
+
+  if (result.is_collide) {
+    motion1->integrate(result.time_of_contact);
+    motion2->integrate(result.time_of_contact);
+
+    Transform3<S> tf1;
+    Transform3<S> tf2;
+    motion1->getCurrentTransform(tf1);
+    motion2->getCurrentTransform(tf2);
+    result.contact_tf1 = tf1;
+    result.contact_tf1 = result.contact_tf1 * offset_o1;
+    result.contact_tf2 = tf2;
+    result.contact_tf2 = result.contact_tf2 * offset_o2;
+  }
+
+  //return res;
+  return toc;
+}
+
+Eigen::Matrix4d make_M_inv() {
+  Eigen::Matrix4d M;
+  M.block<1, 4>(0, 0) << 1.0 / 6.0, 2.0 / 3.0, 1.0 / 6.0, 0.0;
+  M.block<1, 4>(1, 0) << -1.0 / 2.0, 0.0, 1.0 / 2.0, 0.0;
+  M.block<1, 4>(2, 0) << 1.0 / 2.0, -1.0, 1.0 / 2.0, 0.0;
+  M.block<1, 4>(3, 0) << -1.0 / 6.0, 1.0 / 2.0, -1.0 / 2.0, 1.0 / 6.0;
+
+  return M.inverse();
+}
+
+std::array<Eigen::Vector4d, 3> compute_coefficients(const Eigen::Vector3d& x0,
+                                                    const Eigen::Vector3d& x1,
+                                                    const Eigen::Vector3d& v0,
+                                                    const Eigen::Vector3d& v1) {
+  std::array<Eigen::Vector4d, 3> coeffs;
+  for (int i = 0; i < 3; ++i) {
+    // *INDENT-OFF*
+    std::size_t si = static_cast<std::size_t>(i);
+    coeffs[si][0] = x0[i];                                       // = d
+    coeffs[si][1] = v0[i];                                       // = c
+    coeffs[si][2] = -v1[i] - 2 * v0[i] + 3 * x1[i] - 3 * x0[i];  // = b
+    coeffs[si][3] = v1[i] + v0[i] - 2 * x1[i] + 2 * x0[i];       // = a
+    // *INDENT-ON*
+  }
+
+  return coeffs;
+}
+
+std::array<Eigen::Vector3d, 4> compute_knots(
+  Eigen::Vector3d x0,
+  Eigen::Vector3d x1,
+  Eigen::Vector3d v0,
+  Eigen::Vector3d v1)
+{
+printf("x0: %f %f %f x1: %f %f %f\n", x0[0], x0[1], x0[2], x1[0], x1[1], x1[2]);
+  const std::array<Eigen::Vector4d, 3> subspline_coeffs =
+      compute_coefficients(x0, x1, v0, v1);
+
+  Eigen::Matrix4d M_inv = make_M_inv();
+  std::array<Eigen::Vector3d, 4> result;
+  for (std::size_t i = 0; i < 3; ++i) {
+    const Eigen::Vector4d p = M_inv * subspline_coeffs[i];
+    printf("p: %f %f %f %f\n", p[0], p[1], p[2], p[3]);
+    for (int j = 0; j < 4; ++j)
+      result[j][i] = p[j];
+  }
+
+  return result;
+}
+
+GTEST_TEST(FCL_COLLISION, test_conversative_advancement_with_offset) {
+  fcl::Transform3d tx_a;
+  tx_a.setIdentity();
+#if 0 //rotation on the spot
+  auto knots_a =
+      compute_knots(Eigen::Vector3d(0, 0, 0), Eigen::Vector3d(0, 0, 0),
+                    Eigen::Vector3d(0, 0, 0), Eigen::Vector3d(0, 0, 0));
+
+  auto knots_b =
+      compute_knots(Eigen::Vector3d(-2, 0, 0), Eigen::Vector3d(-2, 0, EIGEN_PI / 2.0),
+                    Eigen::Vector3d(0, 0, 0), Eigen::Vector3d(0, 0, 0));
+#endif
+#if 0 //straight line slides
+  auto knots_a =
+      compute_knots(Eigen::Vector3d(0, 0, 0), Eigen::Vector3d(0, 0, 0),
+                    Eigen::Vector3d(0, 0, 0), Eigen::Vector3d(0, 0, 0));
+
+  auto knots_b =
+      compute_knots(Eigen::Vector3d(-2, 2, 0), Eigen::Vector3d(2, 2, 0),
+                    Eigen::Vector3d(0, 0, 0), Eigen::Vector3d(0, 0, 0));
+#endif
+#if 1
+  auto knots_a =
+      compute_knots(Eigen::Vector3d(0, 0, 0), Eigen::Vector3d(0, 0, 0),
+                    Eigen::Vector3d(0, 0, 0), Eigen::Vector3d(0, 0, 0));
+
+  auto knots_b =
+      compute_knots(Eigen::Vector3d(-2, 2, 0), Eigen::Vector3d(2, 2, 0),
+                    Eigen::Vector3d(0, -2, 0), Eigen::Vector3d(0, 2, 0));
+#endif
+
+  auto to_fcl = [](const std::array<Eigen::Vector3d, 4>& knots) {
+    std::array<Eigen::Vector3d, 4> Td;
+    std::array<Eigen::Vector3d, 4> Rd;
+
+    for (std::size_t i = 0; i < 4; ++i) {
+      const Eigen::Vector3d p = knots[i];
+      Td[i] = Eigen::Vector3d(p[0], p[1], 0.0);
+      Rd[i] = Eigen::Vector3d(0.0, 0.0, p[2]);
+    }
+
+    return fcl::SplineMotion<double>(Td[0], Td[1], Td[2], Td[3], Rd[0], Rd[1], Rd[2],
+                             Rd[3]);
+  };
+
+  auto motion_a = std::make_shared<fcl::SplineMotion<double>>(to_fcl(knots_a));
+  auto motion_b = std::make_shared<fcl::SplineMotion<double>>(to_fcl(knots_b));
+
+  // Test collision with unit spheres
+  //auto shape_a = std::make_shared<fcl::Box<double>>(1.0, 1.0, 0.0);
+  auto shape_a = std::make_shared<fcl::Sphere<double>>(0.5);
+  const auto obj_a = fcl::ContinuousCollisionObject<double>(shape_a, motion_a);
+
+  //auto shape_b = std::make_shared<fcl::Box<double>>(1.0, 1.0, 0.0);
+  auto shape_b = std::make_shared<fcl::Sphere<double>>(0.5);
+  const auto obj_b = fcl::ContinuousCollisionObject<double>(shape_b, motion_b);
+
+  auto shape_b2 = std::make_shared<fcl::Sphere<double>>(0.6);
+  const auto obj_b2 = fcl::ContinuousCollisionObject<double>(shape_b2, motion_b);
+  fcl::Transform3d shape_b2_offset;
+  shape_b2_offset.setIdentity();
+  shape_b2_offset.pretranslate(Eigen::Vector3d(0, -1.0, 0));
+
+  fcl::ContinuousCollisionRequest<double> request;
+  request.ccd_solver_type = fcl::CCDC_CONSERVATIVE_ADVANCEMENT;
+  request.gjk_solver_type = fcl::GST_LIBCCD;
+
+  fcl::ContinuousCollisionResultd result;
+#if 1
+  Collision_ConversativeAdv_OffsetShapes<double>(
+    obj_a.collisionGeometry().get(), obj_a.getMotion(), tx_a,
+    obj_b2.collisionGeometry().get(), obj_b2.getMotion(), shape_b2_offset,
+    result);
+#else
+  fcl::collide(&obj_a, &obj_b, request, result);
+#endif
+  EXPECT_TRUE(result.is_collide);
+  if (result.is_collide)
+    std::cout << "collide!\n";
+  std::cout << "toc: " << result.time_of_contact << std::endl;
 }
 
 template <typename S>

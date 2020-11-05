@@ -92,6 +92,7 @@ leafTesting(int, int) const
 
   if(cur_delta_t < delta_t)
     delta_t  = cur_delta_t;
+  printf("leafTesting sphereSphere -> bound: %f distance:%f cur_delta_t:%f\n", bound, distance, cur_delta_t);
 }
 
 //==============================================================================
