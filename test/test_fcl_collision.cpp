@@ -190,6 +190,8 @@ GTEST_TEST(FCL_COLLISION, test_BVH) {
   shape_b2_offset.pretranslate(Eigen::Vector3d(0, -1.0, 0));
 
   auto shape_b_bvh = fcl::make_aligned_shared<fcl::BVHModel<fcl::OBBRSSd>>();
+
+  // sample BVHModel configurations
 #if 0
   auto box_to_triangle_vertices =
       [](const fcl::Boxd& box, const fcl::Transform3d& pose,
@@ -306,8 +308,6 @@ GTEST_TEST(FCL_COLLISION, test_BVH) {
 
   printf("asdasd\n");
   // test for collision
-  fcl::Transform3d identity_offset;
-  identity_offset.setIdentity();
   fcl::ContinuousCollisionResultd result;
   fcl::collide(&obj_a, &obj_b, request, result);
 
