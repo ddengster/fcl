@@ -43,6 +43,7 @@
 #include "fcl/narrowphase/detail/gjk_solver_libccd.h"
 #include "fcl/narrowphase/detail/traversal/collision_node.h"
 #include "fcl/narrowphase/continuous_collision.h"
+#include "fcl/geometry/geometric_shape_to_BVH_model.h"
 
 #include "test_fcl_utility.h"
 
@@ -145,6 +146,175 @@ void test_SplineMotion_rotated_spline_collide_test()
 GTEST_TEST(FCL_COLLISION, test_SplineMotion_rotated_spline_collide_test)
 {
   test_SplineMotion_rotated_spline_collide_test<double>();
+}
+
+Eigen::Matrix4d make_M_inv() {
+  Eigen::Matrix4d M;
+  M.block<1, 4>(0, 0) << 1.0 / 6.0, 2.0 / 3.0, 1.0 / 6.0, 0.0;
+  M.block<1, 4>(1, 0) << -1.0 / 2.0, 0.0, 1.0 / 2.0, 0.0;
+  M.block<1, 4>(2, 0) << 1.0 / 2.0, -1.0, 1.0 / 2.0, 0.0;
+  M.block<1, 4>(3, 0) << -1.0 / 6.0, 1.0 / 2.0, -1.0 / 2.0, 1.0 / 6.0;
+
+  return M.inverse();
+}
+
+std::array<Eigen::Vector4d, 3> compute_coefficients(const Eigen::Vector3d& x0,
+                                                    const Eigen::Vector3d& x1,
+                                                    const Eigen::Vector3d& v0,
+                                                    const Eigen::Vector3d& v1) {
+  std::array<Eigen::Vector4d, 3> coeffs;
+  for (int i = 0; i < 3; ++i) {
+    // *INDENT-OFF*
+    std::size_t si = static_cast<std::size_t>(i);
+    coeffs[si][0] = x0[i];                                       // = d
+    coeffs[si][1] = v0[i];                                       // = c
+    coeffs[si][2] = -v1[i] - 2 * v0[i] + 3 * x1[i] - 3 * x0[i];  // = b
+    coeffs[si][3] = v1[i] + v0[i] - 2 * x1[i] + 2 * x0[i];       // = a
+    // *INDENT-ON*
+  }
+
+  return coeffs;
+}
+
+GTEST_TEST(FCL_COLLISION, test_BVH) {
+  // Test collision with unit spheres vs
+  auto shape_a = std::make_shared<fcl::Sphere<double>>(0.5);
+
+  // auto shape_b = std::make_shared<fcl::Sphere<double>>(0.5);
+  // auto shape_b2 = std::make_shared<fcl::Sphere<double>>(0.6);
+  fcl::Boxd shape_b(0.5, 0.5, 0.0);
+  fcl::Boxd shape_b2(0.6, 0.6, 0.0);
+
+  fcl::Transform3d shape_b2_offset;
+  shape_b2_offset.setIdentity();
+  shape_b2_offset.pretranslate(Eigen::Vector3d(0, -1.0, 0));
+
+  auto shape_b_bvh = fcl::make_aligned_shared<fcl::BVHModel<fcl::OBBRSSd>>();
+#if 0
+  auto box_to_triangle_vertices =
+      [](const fcl::Boxd& box, const fcl::Transform3d& pose,
+         std::vector<fcl::Vector3d>& vertices_out,
+         std::vector<fcl::Triangle>& triangles_out)
+  {
+    double x_length = box.side[0];
+    double y_length = box.side[1];
+
+    vertices_out.resize(4);
+    vertices_out[0] = fcl::Vector3d(-0.5 * x_length, -0.5 * y_length, 0.0);
+    vertices_out[1] = fcl::Vector3d(0.5 * x_length, -0.5 * y_length, 0.0);
+    vertices_out[2] = fcl::Vector3d(-0.5 * x_length, 0.5 * y_length, 0.0);
+    vertices_out[3] = fcl::Vector3d(0.5 * x_length, 0.5 * y_length, 0.0);
+
+    triangles_out.resize(2);
+    triangles_out[0].set(0, 1, 2);
+    triangles_out[1].set(1, 3, 2);
+
+    for (unsigned int i = 0; i < vertices_out.size(); ++i)
+      vertices_out[i] = pose * vertices_out[i];
+    };
+
+  shape_b_bvh->beginModel();
+  // add shape
+  {
+    std::vector<fcl::Vector3d> vertices;
+    std::vector<fcl::Triangle> triangle_indices;
+
+    fcl::Transform3d identity;
+    identity.setIdentity();
+    box_to_triangle_vertices(shape_b, identity, vertices, triangle_indices);
+    int r = shape_b_bvh->addSubModel(vertices, triangle_indices);
+    if (r != fcl::BVH_OK) printf("failed#1\n");
+
+    // vertices.clear();
+    // triangle_indices.clear();
+    // box_to_triangle_vertices(shape_b2, shape_b2_offset, vertices,
+    // triangle_indices); r = shape_b_bvh->addSubModel(vertices,
+    // triangle_indices); if (r != fcl::BVH_OK)
+    //   printf("failed#2");
+  }
+  shape_b_bvh->endModel();
+#else
+  fcl::Transform3d ident;
+  ident.setIdentity();
+  int res = fcl::generateBVHModel(*shape_b_bvh, shape_b, ident, fcl::FinalizeModel::DO);
+  //res = fcl::generateBVHModel(*shape_b_bvh, shape_b2, shape_b2_offset, fcl::FinalizeModel::DO);
+#endif
+
+#if 1
+  // spline motion with same straight line motion. ends up with with an stackoverflow SEH with distanceRecurse going infinate
+  std::shared_ptr<fcl::SplineMotion<double>> motion_a, motion_b;
+  fcl::Vector3d t[4];
+  t[0] = fcl::Vector3d(7.5, 8, 0);
+  t[1] = fcl::Vector3d(4.2, 8, 0);
+  t[2] = fcl::Vector3d(0.8, 8, 0);
+  t[3] = fcl::Vector3d(-2.5, 8, 0);
+
+  fcl::Vector3d r[4];
+  r[0] = fcl::Vector3d(0, 0, 0);
+  r[1] = fcl::Vector3d(0, 0, 0);
+  r[2] = fcl::Vector3d(0, 0, 0);
+  r[3] = fcl::Vector3d(0, 0, 0);
+
+  motion_a = fcl::make_aligned_shared<fcl::SplineMotion<double>>(
+      t[0], t[1], t[2], t[3], r[0], r[1], r[2], r[3]);
+
+  t[0] = fcl::Vector3d(0.0, 8, 0);
+  t[1] = fcl::Vector3d(1.25, 8, 0);
+  t[2] = fcl::Vector3d(3.0, 8, 0);
+  t[3] = fcl::Vector3d(4.6, 8, 0);
+
+  r[0] = fcl::Vector3d(0, 0, 0);
+  r[1] = fcl::Vector3d(0, 0, 0);
+  r[2] = fcl::Vector3d(0, 0, 0);
+  r[3] = fcl::Vector3d(0, 0, 0);
+
+  motion_b = fcl::make_aligned_shared<fcl::SplineMotion<double>>(
+      t[0], t[1], t[2], t[3], r[0], r[1], r[2], r[3]);
+#else
+  // interp motion with the same straight line motion. works as expected.
+  std::shared_ptr<fcl::InterpMotion<double>> motion_a, motion_b;
+
+  fcl::Transform3d a1;
+  a1.setIdentity();
+  a1.translation() = fcl::Vector3<double>(7.5, 8, 0);
+
+  fcl::Transform3d a2;
+  a2.setIdentity();
+  a2.translation() = fcl::Vector3<double>(- 2.5, 8, 0);
+  motion_a = fcl::make_aligned_shared<fcl::InterpMotion<double>>(a1, a2);
+
+  fcl::Transform3d b1;
+  b1.setIdentity();
+  b1.translation() = fcl::Vector3<double>(0, 8, 0);
+
+  fcl::Transform3d b2;
+  b2.setIdentity();
+  b2.translation() = fcl::Vector3<double>(4.6, 8, 0 );
+  motion_b = fcl::make_aligned_shared<fcl::InterpMotion<double>>(b1, b2);
+#endif
+
+  fcl::ContinuousCollisionRequest<double> request;
+  request.ccd_solver_type = fcl::CCDC_CONSERVATIVE_ADVANCEMENT;
+  request.gjk_solver_type = fcl::GST_LIBCCD;
+
+  // reset the motions
+  motion_a->integrate(0.0);
+  motion_b->integrate(0.0);
+
+  const auto obj_a = fcl::ContinuousCollisionObject<double>(shape_a, motion_a);
+  const auto obj_b = fcl::ContinuousCollisionObject<double>(shape_b_bvh, motion_b);
+
+  printf("asdasd\n");
+  // test for collision
+  fcl::Transform3d identity_offset;
+  identity_offset.setIdentity();
+  fcl::ContinuousCollisionResultd result;
+  fcl::collide(&obj_a, &obj_b, request, result);
+
+  if (result.is_collide)
+    printf("collide\n");
+  else
+    printf("nocollide\n");
 }
 
 template <typename S>
